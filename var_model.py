@@ -12,5 +12,5 @@ for i in range(100):
 model = VAR(data)
 model_fit = model.fit()
 # make prediction
-yhat = model_fit.forecast(model_fit.y, steps=1)
+yhat = model_fit.forecast(model_fit.endog[-model_fit.k_ar:], steps=1)
 print(yhat)
