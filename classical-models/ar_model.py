@@ -1,87 +1,33 @@
-# from pandas import read_csv
-# from matplotlib import pyplot
-# series = read_csv('daily-min-temperatures.csv', header=0, index_col=0)
-# print(series.head())
-# series.plot()
-# pyplot.show()
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.metrics import mean_squared_error
+from math import sqrt
 
+url = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv"
+series = pd.read_csv(url, header=0, index_col=0, parse_dates=True)
+series = series.asfreq('D').ffill()
 
-# create and evaluate a static autoregressive model
-# from pandas import read_csv
-# from matplotlib import pyplot
-# from statsmodels.tsa.ar_model import AutoReg
-# from sklearn.metrics import mean_squared_error
-# from math import sqrt
-# # load dataset
-# series = read_csv('daily-min-temperatures.csv', header=0, index_col=0, parse_dates=True)
-# print(series.head())
-# # split dataset
-# X = series.values
-# train, test = X[1:len(X)-7], X[len(X)-7:]
-# # train autoregression
-# model = AutoReg(train, lags=29)
-# model_fit = model.fit()
-# print('Coefficients: %s' % model_fit.params)
-# # make predictions
-# predictions = model_fit.predict(start=len(train), end=len(train)+len(test)-1, dynamic=False)
-# for i in range(len(predictions)):
-# 	print('predicted=%f, expected=%f' % (predictions[i], test[i]))
-# rmse = sqrt(mean_squared_error(test, predictions))
-# print('Test RMSE: %.3f' % rmse)
-# # plot results
-# pyplot.plot(test)
-# pyplot.plot(predictions, color='red')
-# pyplot.show()
+train = series[:-365]
+test = series[-365:]
 
+train_series = train['Temp']
+test_series = test['Temp']
 
+# AR Modeli
+model = ARIMA(train_series, order=(7,0,0)).fit()
+forecast = model.forecast(steps=len(test_series))
 
+rmse = sqrt(mean_squared_error(test_series, forecast))
+print(f"AR Model RMSE: {rmse:.3f}")
+print("Tahmin Edilen Değerler:")
+print(forecast.values)
 
-# create and evaluate an updated autoregressive model
-# # from pandas import read_csv
-# # from matplotlib import pyplot
-# # from statsmodels.tsa.ar_model import AutoReg
-# # from sklearn.metrics import mean_squared_error
-# # from math import sqrt
-# # # load dataset
-# # series = read_csv('daily-min-temperatures.csv', header=0, index_col=0, parse_dates=True)
-# # # split dataset
-# # X = series.values
-# # train, test = X[1:len(X)-7], X[len(X)-7:]
-# # # train autoregression
-# # window = 29
-# # model = AutoReg(train, lags=29)
-# # model_fit = model.fit()
-# # coef = model_fit.params
-# # # walk forward over time steps in test
-# # history = train[len(train)-window:]
-# # history = [history[i] for i in range(len(history))]
-# # predictions = list()
-# # for t in range(len(test)):
-# # 	length = len(history)
-# # 	lag = [history[i] for i in range(length-window,length)]
-# # 	yhat = coef[0]
-# # 	for d in range(window):
-# # 		yhat += coef[d+1] * lag[window-d-1]
-# # 	obs = test[t]
-# # 	predictions.append(yhat)
-# # 	history.append(obs)
-# # 	print('predicted=%f, expected=%f' % (yhat, obs))
-# # rmse = sqrt(mean_squared_error(test, predictions))
-# # print('Test RMSE: %.3f' % rmse)
-# # # plot
-# # pyplot.plot(test)
-# # pyplot.plot(predictions, color='red')
-# # pyplot.show()
-
-# AR example
-from statsmodels.tsa.ar_model import AutoReg
-from random import random
-# contrived dataset
-data = [x + random() for x in range(1, 100)]
-# fit model
-model = AutoReg(data, lags=1)
-model_fit = model.fit()
-# make prediction
-yhat = model_fit.predict(len(data), len(data))
-print(yhat)
-
+plt.figure(figsize=(12, 6))
+plt.plot(test_series, label="Gerçek Değerler", color="black")
+plt.plot(test.index, forecast, label=f"AR Tahminleri (RMSE={rmse:.2f})", linestyle="--", color="blue")
+plt.legend()
+plt.title("AR Model - Forecast vs Actual")
+plt.grid(True)
+plt.show()
