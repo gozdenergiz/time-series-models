@@ -1,30 +1,128 @@
-import matplotlib.pyplot as plt
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, InputLayer, Dropout
+from pandas import DataFrame
+from pandas import Series
+from pandas import concat
+from pandas import read_csv
+from datetime import datetime
 from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import MinMaxScaler
+from keras.layers import Input
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
 from math import sqrt
-from data_prep import prepare_air_quality_data
+from matplotlib import pyplot
+import numpy
 
-X_train, y_train, X_test, y_test, scaler = prepare_air_quality_data()
+# date-time parsing function for loading the dataset
+def parser(x):
+	return datetime.strptime('190'+x, '%Y-%m')
 
-model = Sequential([
-    InputLayer(input_shape=(X_train.shape[1], 1)),
-    LSTM(64, activation='relu'),
-    Dropout(0.2),
-    Dense(1)
-])
+# frame a sequence as a supervised learning problem
+def timeseries_to_supervised(data, lag=1):
+	df = DataFrame(data)
+	columns = [df.shift(i) for i in range(1, lag+1)]
+	columns.append(df)
+	df = concat(columns, axis=1)
+	df.fillna(0, inplace=True)
+	return df
 
-model.compile(optimizer='adam', loss='mse')
-model.fit(X_train, y_train, epochs=20, batch_size=32, validation_data=(X_test, y_test))
+# create a differenced series
+def difference(dataset, interval=1):
+	diff = list()
+	for i in range(interval, len(dataset)):
+		value = dataset[i] - dataset[i - interval]
+		diff.append(value)
+	return Series(diff)
 
-y_pred = model.predict(X_test).flatten()
-rmse = sqrt(mean_squared_error(y_test, y_pred))
+# invert differenced value
+def inverse_difference(history, yhat, interval=1):
+	return yhat + history[-interval]
 
-print(f"LSTM Model RMSE: {rmse:.3f}")
+# scale train and test data to [-1, 1]
+def scale(train, test):
+	# fit scaler
+	scaler = MinMaxScaler(feature_range=(-1, 1))
+	scaler = scaler.fit(train)
+	# transform train
+	train = train.reshape(train.shape[0], train.shape[1])
+	train_scaled = scaler.transform(train)
+	# transform test
+	test = test.reshape(test.shape[0], test.shape[1])
+	test_scaled = scaler.transform(test)
+	return scaler, train_scaled, test_scaled
 
-plt.figure(figsize=(12, 6))
-plt.plot(y_test.values, label='Gerçek Değerler', color='black')
-plt.plot(y_pred, label=f'LSTM Tahminleri (RMSE={rmse:.3f})', linestyle='--')
-plt.legend()
-plt.grid(True)
-plt.show()
+# inverse scaling for a forecasted value
+def invert_scale(scaler, X, value):
+	new_row = [x for x in X] + [value]
+	array = numpy.array(new_row)
+	array = array.reshape(1, len(array))
+	inverted = scaler.inverse_transform(array)
+	return inverted[0, -1]
+
+# fit an LSTM network to training data
+def fit_lstm(train, batch_size, nb_epoch, neurons):
+    X, y = train[:, 0:-1], train[:, -1]
+    X = X.reshape((X.shape[0], X.shape[1], 1))
+
+    model = Sequential()
+    model.add(Input(shape=(X.shape[1], 1)))  # Stateless model
+    model.add(LSTM(neurons))
+    model.add(Dense(1))
+    model.compile(loss='mean_squared_error', optimizer='adam')
+
+    model.fit(X, y, epochs=nb_epoch, batch_size=batch_size, verbose=1)
+    return model
+
+
+# make a one-step forecast
+def forecast_lstm(model, batch_size, X):
+	X = X.reshape(1, 1, len(X))
+	yhat = model.predict(X, batch_size=batch_size)
+	return yhat[0,0]
+
+# load dataset
+url="https://raw.githubusercontent.com/jbrownlee/Datasets/master/shampoo.csv"
+series = read_csv(url, header=0, parse_dates=[0], index_col=0, date_parser=parser)
+
+# transform data to be stationary
+raw_values = series.values
+diff_values = difference(raw_values, 1)
+
+# transform data to be supervised learning
+supervised = timeseries_to_supervised(diff_values, 1)
+supervised_values = supervised.values
+
+# split data into train and test-sets
+train, test = supervised_values[0:-12], supervised_values[-12:]
+
+# transform the scale of the data
+scaler, train_scaled, test_scaled = scale(train, test)
+
+# fit the model
+lstm_model = fit_lstm(train_scaled, 1, 200, 4)
+# forecast the entire training dataset to build up state for forecasting
+train_reshaped = train_scaled[:, 0].reshape(len(train_scaled), 1, 1)
+lstm_model.predict(train_reshaped, batch_size=1)
+
+# walk-forward validation on the test data
+predictions = list()
+for i in range(len(test_scaled)):
+	# make one-step forecast
+	X, y = test_scaled[i, 0:-1], test_scaled[i, -1]
+	yhat = forecast_lstm(lstm_model, 1, X)
+	# invert scaling
+	yhat = invert_scale(scaler, X, yhat)
+	# invert differencing
+	yhat = inverse_difference(raw_values, yhat, len(test_scaled)+1-i)
+	# store forecast
+	predictions.append(yhat)
+	expected = raw_values[len(train) + i + 1]
+	print('Month=%d, Predicted=%f, Expected=%f' % (i+1, yhat, expected))
+
+# report performance
+rmse = sqrt(mean_squared_error(raw_values[-12:], predictions))
+print('Test RMSE: %.3f' % rmse)
+# line plot of observed vs predicted
+pyplot.plot(raw_values[-12:])
+pyplot.plot(predictions)
+pyplot.show()
